@@ -1,0 +1,131 @@
+<adapter>
+  <unique-id>interlok-mongodb-docker</unique-id>
+  <shared-components>
+    <connections>
+      <mongodb-connection>
+        <unique-id>mongodb-connection</unique-id>
+        <connection-uri>mongodb://mongodb:27017</connection-uri>
+        <database>database</database>
+      </mongodb-connection>
+    </connections>
+    <services/>
+  </shared-components>
+  <channel-list>
+    <channel>
+      <unique-id>null-mongodb</unique-id>
+      <consume-connection class="null-connection" />
+      <produce-connection class="shared-connection">
+        <lookup-name>mongodb-connection</lookup-name>
+      </produce-connection>
+      <workflow-list>
+        <standard-workflow>
+          <unique-id>add-timestamp</unique-id>
+          <consumer class="polling-trigger">
+            <poller class="fixed-interval-poller">
+              <poll-interval>
+                <unit>SECONDS</unit>
+                <interval>20</interval>
+              </poll-interval>
+            </poller>
+          </consumer>
+          <service-collection class="service-list">
+            <services>
+              <add-timestamp-metadata-service>
+                <metadata-key>timestamp</metadata-key>
+                <date-format-builder>
+                  <format>yyyy-MM-dd&apos;T&apos;HH:mm:ssZ</format>
+                </date-format-builder>
+              </add-timestamp-metadata-service>
+              <payload-from-metadata-service>
+                <metadata-tokens>
+                  <key-value-pair>
+                    <key>timestamp</key>
+                    <value>__TIMESTAMP__</value>
+                  </key-value-pair>
+                </metadata-tokens>
+                <template><![CDATA[{ "timestamp" : "__TIMESTAMP__"}]]></template>
+              </payload-from-metadata-service>
+            </services>
+          </service-collection>
+          <producer class="mongodb-write-producer">
+            <destination class="configured-destination">
+              <destination>timestamp-collection</destination>
+            </destination>
+          </producer>
+        </standard-workflow>
+      </workflow-list>
+    </channel>
+    <channel>
+      <unique-id>jetty-null</unique-id>
+      <consume-connection class="jetty-embedded-connection" />
+      <produce-connection class="null-connection" />
+      <workflow-list>
+        <pooling-workflow>
+          <unique-id>api</unique-id>
+          <jetty-pooling-workflow-interceptor />
+          <consumer class="jetty-message-consumer">
+            <destination class="configured-consume-destination">
+              <destination>/api/*</destination>
+            </destination>
+          </consumer>
+          <service-collection class="service-list">
+            <services>
+              <branching-service-collection>
+                <first-service-id>http-routing</first-service-id>
+                <services>
+                  <jetty-routing-service>
+                    <unique-id>http-routing</unique-id>
+                    <route>
+                      <url-pattern>/api/timestamps</url-pattern>
+                      <method>GET</method>
+                      <service-id>all-timestamps</service-id>
+                    </route>
+                    <default-service-id>not-found</default-service-id>
+                  </jetty-routing-service>
+                  <standalone-requestor>
+                    <unique-id>all-timestamps</unique-id>
+                    <connection class="shared-connection">
+                      <lookup-name>mongodb-connection</lookup-name>
+                    </connection>
+                    <producer class="mongodb-find-producer">
+                      <destination class="configured-destination">
+                        <destination>timestamp-collection</destination>
+                      </destination>
+                    </producer>
+                  </standalone-requestor>
+                  <service-list>
+                    <unique-id>not-found</unique-id>
+                    <services>
+                      <standalone-producer>
+                        <connection class="null-connection" />
+                        <producer class="jetty-standard-response-producer">
+                          <status-provider class="http-configured-status">
+                            <status>NOT_FOUND_404</status>
+                          </status-provider>
+                          <response-header-provider class="jetty-no-response-headers"/>
+                          <content-type-provider class="http-null-content-type-provider"/>
+                          <send-payload>false</send-payload>
+                        </producer>
+                      </standalone-producer>
+                      <stop-processing-service />
+                    </services>
+                  </service-list>
+                </services>
+              </branching-service-collection>
+            </services>
+          </service-collection>
+          <producer class="jetty-standard-response-producer">
+            <status-provider class="http-configured-status">
+              <status>OK_200</status>
+            </status-provider>
+            <response-header-provider class="jetty-no-response-headers"/>
+            <content-type-provider class="http-configured-content-type-provider">
+              <mime-type>application/json</mime-type>
+            </content-type-provider>
+            <send-payload>true</send-payload>
+          </producer>
+        </pooling-workflow>
+      </workflow-list>
+    </channel>
+  </channel-list>
+</adapter>
